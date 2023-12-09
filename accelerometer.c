@@ -1,10 +1,30 @@
+#include <stm32.h>
+#include <gpio.h>
+#include <string.h>
 #include "i2c.h"
+#include "messages.h"
 
 #define LIS35DE_ADDR 0x1D
 
 void startAccelerometer() {
-    char buffer_write[] = {0x20, 0x47};
-    i2c_write_read(2, 0, LIS35DE_ADDR, buffer_write, 0);
+    char buffer_zero_ctrl_reg_1[] = {0x20, 0x00};
+    i2c_write_read(2, 0, LIS35DE_ADDR, buffer_zero_ctrl_reg_1, 0);
+    char buffer_zero_ctrl_reg_3[] = {0x22, 0x00};
+    i2c_write_read(2, 0, LIS35DE_ADDR, buffer_zero_ctrl_reg_3, 0);
+
+    GPIOinConfigure(GPIOA,
+                    1,
+                    GPIO_PuPd_UP,
+                    EXTI_Mode_Interrupt,
+                    EXTI_Trigger_Rising);
+                
+    NVIC_EnableIRQ(EXTI1_IRQn);
+
+    char buffer_setup_ctrl_reg_1[] = {0x20, 0x47};
+    i2c_write_read(2, 0, LIS35DE_ADDR, buffer_setup_ctrl_reg_1, 0);
+    // Data Ready interrupt on line INT1
+    char buffer_setup_ctrl_reg_3[] = {0x22, 0x04};
+    i2c_write_read(2, 0, LIS35DE_ADDR, buffer_setup_ctrl_reg_3, 0);
 }
 
 static signed char i2c_output;
@@ -35,4 +55,64 @@ signed char readZ() {
     char buffer_write[] = {0x2D};
     i2c_write_read(1, 1, LIS35DE_ADDR, buffer_write, read_callback);
     return i2c_output;
+}
+
+
+
+static signed char abs(signed char x){
+    if(x < 0)
+        return -x;
+    return x;
+}
+
+static char hex(char x) {
+    switch (x)
+    {
+        case 0: return '0';
+        case 1: return '1';
+        case 2: return '2';
+        case 3: return '3';
+        case 4: return '4';
+        case 5: return '5';
+        case 6: return '6';
+        case 7: return '7';
+        case 8: return '8';
+        case 9: return '9';
+        case 10: return 'A';
+        case 11: return 'B';
+        case 12: return 'C';
+        case 13: return 'D';
+        case 14: return 'E';
+        case 15: return 'F';
+        default: return '?';
+    }
+}
+
+static void char_to_hex(char x, char* buf) {
+    char y = x % 16;
+    buf[0] = hex(x / 16);
+    buf[1] = hex(y);
+
+}
+
+void EXTI1_IRQHandler(void) {
+    EXTI->PR = EXTI_PR_PR1;
+    char x_val = abs(readX());
+    char y_val = abs(readY());
+    char z_val = abs(readZ());
+    TIM3->CCR1 = 1000 - x_val*3;
+    TIM3->CCR2 = 1000 - y_val*3;
+    TIM3->CCR3 = 1000 - z_val*3;
+
+    char message[16];
+    strcpy(message, "XYZ: ");
+    char_to_hex(x_val, message + 5);
+    message[7] = '-';
+    char_to_hex(y_val, message + 8);
+    message[10] = '-';
+    char_to_hex(z_val, message + 11);
+    message[13] = '\r';
+    message[14] = '\n';
+    message[15] = '\0';
+    send_message(message);
 }
