@@ -1,0 +1,14 @@
+#ifndef _PRIO_H_
+#define _PRIO_H_
+
+#define VERY_HIGH_IRQ_PRIO 0U
+#define HIGH_IRQ_PRIO 1U
+#define MIDDLE_IRQ_PRIO 2U
+#define LOW_IRQ_PRIO 3U
+
+#define VERY_HIGH_IRQ_SUBPRIO 0U
+#define HIGH_IRQ_SUBPRIO 1U
+#define MIDDLE_IRQ_SUBPRIO 2U
+#define LOW_IRQ_SUBPRIO 3U
+
+#endif
