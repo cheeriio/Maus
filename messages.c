@@ -3,7 +3,7 @@
 #include "prio.h"
 #include "utils.h"
 
-#define _MESSAGES_Q_LEN 10
+#define _MESSAGES_Q_LEN 1000
 
 typedef struct {
     char* message;

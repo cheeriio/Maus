@@ -7,10 +7,41 @@
 #include "messages.h"
 #include "i2c.h"
 #include "accelerometer.h"
+#include <stdlib.h>
 
 #define HSI_HZ 16000000U
 #define PCLK1_HZ HSI_HZ
 #define BAUD 9600U
+
+static char hex(char x) {
+    switch (x)
+    {
+        case 0: return '0';
+        case 1: return '1';
+        case 2: return '2';
+        case 3: return '3';
+        case 4: return '4';
+        case 5: return '5';
+        case 6: return '6';
+        case 7: return '7';
+        case 8: return '8';
+        case 9: return '9';
+        case 10: return 'A';
+        case 11: return 'B';
+        case 12: return 'C';
+        case 13: return 'D';
+        case 14: return 'E';
+        case 15: return 'F';
+        default: return '?';
+    }
+}
+
+static void char_to_hex(char x, char* buf) {
+    char y = x % 16;
+    buf[0] = hex(x / 16);
+    buf[1] = hex(y);
+
+}
 
 void configureDMA();
 
@@ -31,7 +62,6 @@ int main() {
     USART2->CR1 |= USART_CR1_UE;
 
     i2c_enable();
-    startAccelerometer();
 
     GPIOafConfigure(GPIOA, 6, GPIO_OType_PP,
                     GPIO_Low_Speed,
@@ -66,7 +96,36 @@ int main() {
 
     TIM3->CR1 = TIM_CR1_ARPE |  TIM_CR1_CMS_0 |
                 TIM_CR1_CMS_1 | TIM_CR1_CEN;
-    while(1) {}
+
+    startAccelerometer();
+
+    int x = 0;
+    while(1) {
+        x = (x + 1) % 1000001;
+        if (x == 1000000) {
+            send_message("Reading X\r\n");
+            char x_val = abs(readX());
+            send_message("Reading Y\r\n");
+            char y_val = abs(readY());
+            send_message("Reading Z\r\n");
+            char z_val = abs(readZ());
+            TIM3->CCR1 = 1000 - x_val*3;
+            TIM3->CCR2 = 1000 - y_val*3;
+            TIM3->CCR3 = 1000 - z_val*3;
+
+            char message[16];
+            strcpy(message, "XYZ: ");
+            char_to_hex(x_val, message + 5);
+            message[7] = '-';
+            char_to_hex(y_val, message + 8);
+            message[10] = '-';
+            char_to_hex(z_val, message + 11);
+            message[13] = '\r';
+            message[14] = '\n';
+            message[15] = '\0';
+            send_message(message);
+        }
+    }
 }
 
 void configureDMA() {
