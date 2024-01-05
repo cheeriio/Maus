@@ -13,36 +13,6 @@
 #define PCLK1_HZ HSI_HZ
 #define BAUD 9600U
 
-static char hex(char x) {
-    switch (x)
-    {
-        case 0: return '0';
-        case 1: return '1';
-        case 2: return '2';
-        case 3: return '3';
-        case 4: return '4';
-        case 5: return '5';
-        case 6: return '6';
-        case 7: return '7';
-        case 8: return '8';
-        case 9: return '9';
-        case 10: return 'A';
-        case 11: return 'B';
-        case 12: return 'C';
-        case 13: return 'D';
-        case 14: return 'E';
-        case 15: return 'F';
-        default: return '?';
-    }
-}
-
-static void char_to_hex(char x, char* buf) {
-    char y = x % 16;
-    buf[0] = hex(x / 16);
-    buf[1] = hex(y);
-
-}
-
 void configureDMA();
 
 void configureUSART();
@@ -50,7 +20,8 @@ void configureUSART();
 int main() {
     RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN | RCC_AHB1ENR_GPIOBEN
                  | RCC_AHB1ENR_GPIOCEN | RCC_AHB1ENR_DMA1EN;
-    RCC->APB1ENR |= RCC_APB1ENR_USART2EN | RCC_APB1ENR_TIM3EN | RCC_APB1ENR_I2C1EN;
+    RCC->APB1ENR |= RCC_APB1ENR_USART2EN | RCC_APB1ENR_TIM3EN
+                  | RCC_APB1ENR_I2C1EN | RCC_APB1ENR_TIM4EN;
     RCC->APB2ENR |= RCC_APB2ENR_SYSCFGEN;
 
     __NOP();
@@ -72,6 +43,17 @@ int main() {
     GPIOafConfigure(GPIOB, 0, GPIO_OType_PP,
                     GPIO_Low_Speed,
                     GPIO_PuPd_NOPULL, GPIO_AF_TIM3);
+
+    /*
+        TODO: 
+        - Add timer on which interrupts' x, y, z values are read from the
+          accelerometer and used to update the PWM parameters. --- DONE, not working currently ;)
+        - Rewrite the i2c_write_read function so that it uses an internal
+          buffer and there is no need to wait like a dumb dumb
+    
+    */
+
+    startAccelerometer();
 
     TIM3->PSC = 99;
     TIM3->ARR = 999;
@@ -97,35 +79,17 @@ int main() {
     TIM3->CR1 = TIM_CR1_ARPE |  TIM_CR1_CMS_0 |
                 TIM_CR1_CMS_1 | TIM_CR1_CEN;
 
-    startAccelerometer();
+    TIM4->CR1 = TIM_CR1_URS;
+    TIM4->PSC = 15999;
+    TIM4->ARR = 99;
+    TIM4->EGR = TIM_EGR_UG;
+    TIM4->SR = ~TIM_SR_UIF;
+    TIM4->DIER =  TIM_DIER_UIE;
+    TIM4->CR1 |= TIM_CR1_CEN;
 
-    int x = 0;
-    while(1) {
-        x = (x + 1) % 1000001;
-        if (x == 1000000) {
-            send_message("Reading X\r\n");
-            char x_val = abs(readX());
-            send_message("Reading Y\r\n");
-            char y_val = abs(readY());
-            send_message("Reading Z\r\n");
-            char z_val = abs(readZ());
-            TIM3->CCR1 = 1000 - x_val*3;
-            TIM3->CCR2 = 1000 - y_val*3;
-            TIM3->CCR3 = 1000 - z_val*3;
-
-            char message[16];
-            strcpy(message, "XYZ: ");
-            char_to_hex(x_val, message + 5);
-            message[7] = '-';
-            char_to_hex(y_val, message + 8);
-            message[10] = '-';
-            char_to_hex(z_val, message + 11);
-            message[13] = '\r';
-            message[14] = '\n';
-            message[15] = '\0';
-            send_message(message);
-        }
-    }
+    NVIC_EnableIRQ(TIM4_IRQn);
+    
+    while(1) {}
 }
 
 void configureDMA() {
@@ -158,4 +122,10 @@ void configureUSART() {
     USART2->CR2 = 0;
     USART2->BRR = (PCLK1_HZ + (BAUD / 2U)) / BAUD;
     USART2->CR3 = USART_CR3_DMAT;
+}
+
+void TIM4_IRQHandler(void) {
+    send_message("TIM4 interrupt\r\n");
+    TIM4->SR = ~TIM_SR_UIF;
+    updateLED();
 }

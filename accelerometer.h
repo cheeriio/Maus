@@ -3,10 +3,6 @@
 
 void startAccelerometer();
 
-int checkDataAvailable();
-
-signed int readX();
-signed int readY();
-signed int readZ();
+void updateLED();
 
 #endif // _ACCELEROMETER_H_

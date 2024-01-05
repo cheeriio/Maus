@@ -2,11 +2,14 @@
 #include <gpio.h>
 #include "i2c.h"
 #include "messages.h"
+#include <string.h>
 
 #define I2C_SPEED_HZ 100000
 #define PCLK1_MHZ 16
 
-// Initial version without using interrupts.
+#define _Q_LEN 1000
+#define _MAX_WRITE_LEN 10
+
 void i2c_enable() {
     RCC->AHB1ENR |= RCC_AHB1ENR_GPIOBEN;
     RCC->APB1ENR |= RCC_APB1ENR_I2C1EN;
@@ -32,6 +35,18 @@ void i2c_enable() {
 
 #define MAX_READ_LEN 100
 
+typedef struct {
+    int write;
+    int read;
+    char slave_address;
+    char buffer_write[_MAX_WRITE_LEN];
+    void (*callback)(char*);
+} Transmission;
+
+static Transmission trans_queue[_Q_LEN];
+static int first = 0;
+static int q_size = 0;
+
 static int _write;
 static int _read;
 static char* _buffer_write;
@@ -43,43 +58,6 @@ static int _i_read;
 
 static int _i2c_busy = 0;
 static void (*_callback)(char*);
-
-void i2c_write_read(int write,
-                    int read,
-                    char slave_address,
-                    char* buffer_write,
-                    void (*callback)(char*)) {
-    if (_i2c_busy) {
-        send_message("I2C busy, returned\r\n");
-        return;
-    }
-    _i2c_busy = 1;
-
-    _write = write;
-    _read = read;
-    _buffer_write = buffer_write;
-    _slave_address = slave_address;
-    _callback = callback;
-    
-    _i_write = 0;
-    _i_read = 0;
-
-
-    if(_write == 0 && _read == 0)
-        return;
-
-    I2C1->CR2 |= I2C_CR2_ITERREN | I2C_CR2_ITEVTEN;
-    I2C1->CR1 |= I2C_CR1_START;
-
-    int x = 0;
-    while(_i2c_busy) {
-        x = (x + 1) % 20000000;
-        if(x % 250000 == 0)
-            send_message("kuku\r\n");
-    } // Makes whole point of using interrupts invalid. Later will add buffer for the i2c_write_read calls.
-    send_message("Exited the loop\r\n");
-    return;
-}
 
 static char hex(unsigned char x) {
     switch (x)
@@ -108,114 +86,212 @@ static void char_to_hex(unsigned char x, char* buf) {
     unsigned char y = x % 16;
     buf[0] = hex(x / 16);
     buf[1] = hex(y);
+}
 
+void print_int(int x) {
+    while(x > 0) {
+        if(x % 2 == 0) {
+            send_message("0");
+        } else
+            send_message("1");
+        x /= 2;
+    }
+    send_message("\r\n");
+}
+
+static void print_val(char x) {
+    while(x > 0) {
+        if(x % 2 == 0) {
+            send_message("0");
+        } else
+            send_message("1");
+        x /= 2;
+    }
+    send_message("\r\n");
+}
+
+void i2c_write_read(int write,
+                    int read,
+                    char slave_address,
+                    char* buffer_write,
+                    void (*callback)(char*)) {
+    send_message("I2C: writing\r\n");
+    for(int i = 0; i < write; i++) {
+        print_val(buffer_write[i]);
+    }
+    send_message("to ");
+    print_val(slave_address);
+
+    // Turn off interrupts - add later
+
+    int index = (first + q_size) % _Q_LEN;
+    q_size++;
+    trans_queue[index].write = write;
+    trans_queue[index].read = read;
+    trans_queue[index].slave_address = slave_address;
+    trans_queue[index].callback = callback;
+    memcpy(trans_queue[index].buffer_write, buffer_write, write);
+
+    if (_i2c_busy) {
+        return;
+    }
+
+    _i2c_busy = 1;
+
+    // Turn on interrupts - add later
+
+    _write = write;
+    _read = read;
+    _buffer_write = trans_queue[index].buffer_write;
+    _slave_address = slave_address;
+    _callback = trans_queue[index].callback;
+    
+    _i_write = 0;
+    _i_read = 0;
+
+    I2C1->CR2 |= I2C_CR2_ITERREN | I2C_CR2_ITEVTEN;
+    I2C1->CR1 |= I2C_CR1_START;
 }
 
 void print_interrupt(uint32_t SR1) {
-    if(SR1 & I2C_SR1_SB)
-        send_message("\tI2C_SR1_SB\r\n");
-    if(SR1 & I2C_SR1_ADDR)
-        send_message("\tI2C_SR1_ADDR\r\n");
-    if(SR1 & I2C_SR1_RXNE)
-        send_message("\tI2C_SR1_RXNE\r\n");
-    if(SR1 & I2C_SR1_BTF)
-        send_message("\tI2C_SR1_BTF\r\n");
-    if(SR1 & I2C_SR1_TXE)
-        send_message("\tI2C_SR1_TXE\r\n");
-    if(SR1 & I2C_SR1_STOPF)
-        send_message("\tI2C_SR1_STOPF\r\n");
-    if(SR1 & I2C_SR1_ADD10)
-        send_message("\tI2C_SR1_ADD10\r\n");
-    if(SR1 & I2C_SR1_BERR)
-        send_message("\tI2C_SR1_BERR\r\n");
-    if(SR1 & I2C_SR1_ARLO)
-        send_message("\tI2C_SR1_ARLO\r\n");
-    if(SR1 & I2C_SR1_AF)
-        send_message("\tI2C_SR1_AF\r\n");
-    if(SR1 & I2C_SR1_OVR)
-        send_message("\tI2C_SR1_OVR\r\n");
-    if(SR1 & I2C_SR1_PECERR)
-        send_message("\tI2C_SR1_PECERR\r\n");
-    if(SR1 & I2C_SR1_TIMEOUT)
-        send_message("\tI2C_SR1_ADD10\r\n");
-    if(SR1 & I2C_SR1_SMBALERT)
-        send_message("\tI2C_SR1_SMBALERT\r\n");
+    // if(SR1 & I2C_SR1_SB)
+    //     send_message("\tI2C_SR1_SB\r\n");
+    // if(SR1 & I2C_SR1_ADDR)
+    //     send_message("\tI2C_SR1_ADDR\r\n");
+    // if(SR1 & I2C_SR1_RXNE)
+    //     send_message("\tI2C_SR1_RXNE\r\n");
+    // if(SR1 & I2C_SR1_BTF)
+    //     send_message("\tI2C_SR1_BTF\r\n");
+    // if(SR1 & I2C_SR1_TXE)
+    //     send_message("\tI2C_SR1_TXE\r\n");
+    // if(SR1 & I2C_SR1_STOPF)
+    //     send_message("\tI2C_SR1_STOPF\r\n");
+    // if(SR1 & I2C_SR1_ADD10)
+    //     send_message("\tI2C_SR1_ADD10\r\n");
+    // if(SR1 & I2C_SR1_BERR)
+    //     send_message("\tI2C_SR1_BERR\r\n");
+    // if(SR1 & I2C_SR1_ARLO)
+    //     send_message("\tI2C_SR1_ARLO\r\n");
+    // if(SR1 & I2C_SR1_AF)
+    //     send_message("\tI2C_SR1_AF\r\n");
+    // if(SR1 & I2C_SR1_OVR)
+    //     send_message("\tI2C_SR1_OVR\r\n");
+    // if(SR1 & I2C_SR1_PECERR)
+    //     send_message("\tI2C_SR1_PECERR\r\n");
+    // if(SR1 & I2C_SR1_TIMEOUT)
+    //     send_message("\tI2C_SR1_ADD10\r\n");
+    // if(SR1 & I2C_SR1_SMBALERT)
+    //     send_message("\tI2C_SR1_SMBALERT\r\n");
     
-    for(int i = 0; i < 32; i++) {
-        if(SR1 & (1 << (31 - i)))
-            send_message("1");
-        else
-            send_message("0");
-    }
+    // for(int i = 0; i < 32; i++) {
+    //     if(SR1 & (1 << (31 - i)))
+    //         send_message("1");
+    //     else
+    //         send_message("0");
+    // }
 
-    send_message("\r\n");
+    // send_message("\r\n");
+}
+
+static void start_next_transmission() {
+    Transmission t = trans_queue[first];
+    first = (first + 1) % _Q_LEN;
+    q_size--;
+
+    _write = t.write;
+    _read = t.read;
+    _buffer_write = t.buffer_write;
+    _slave_address = t.slave_address;
+    _callback = t.callback;
+    
+    _i_write = 0;
+    _i_read = 0;
+
+    I2C1->CR1 |= I2C_CR1_START;
 }
 
 static void handle_writing() {
     uint32_t SR1 = I2C1->SR1;
-    send_message("'handle_writing': got\r\n");
-    print_interrupt(SR1);
+    send_message("'handle_writing()' got ");
     if (SR1 & I2C_SR1_SB) {
+        send_message("SB\r\n");
         I2C1->DR = _slave_address << 1;
     } else if (SR1 & I2C_SR1_ADDR) {
+        send_message("ADDR\r\n");
         I2C1->SR2;
         if(_write > 1)
             I2C1->CR2 |= I2C_CR2_ITBUFEN; // Turn on buffer related interrupts
         I2C1->DR = _buffer_write[0];
+        send_message("SENT ");
+        print_val(_buffer_write[0]);
     } else if(SR1 & I2C_SR1_BTF && _i_write == _write - 1) {
+        send_message("BTF\r\n");
         _i_write++;
         if(_read == 0){
-            send_message("Stopping the transmission\r\n");
+            // send_message("Stopping the transmission\r\n");
             I2C1->CR1 |= I2C_CR1_STOP;
-            I2C1->CR2 &= ~(I2C_CR2_ITERREN | I2C_CR2_ITEVTEN);
-            _i2c_busy = 0;
+            if(q_size > 0) {
+                start_next_transmission();
+            } else {
+                I2C1->CR2 &= ~(I2C_CR2_ITERREN | I2C_CR2_ITEVTEN);
+                _i2c_busy = 0;
+            }
         } else {
-            send_message("Writing done. Time to read.\r\n");
+            // send_message("Writing done. Time to read.\r\n");
             I2C1->CR1 |= I2C_CR1_START;
         }
     } else if(SR1 & I2C_SR1_TXE && _i_write < _write - 1) {
+        send_message("TXE\r\n");
         _i_write++;
         if(_i_write == _write - 1)
             I2C1->CR2 &= ~I2C_CR2_ITBUFEN; // Turn them off
         I2C1->DR = _buffer_write[_i_write];
-    } else
-        send_message("^ --- That was unexpected\r\n");
+        send_message("SENT ");
+        print_val(_buffer_write[_i_write]);
+    } else {
+        send_message("???\r\n");
+    }
+        // send_message("^ --- That was unexpected\r\n");
 }
 
 static void handle_reading() {
     uint32_t SR1 = I2C1->SR1;
-    send_message("'handle_reading': got\r\n");
-    print_interrupt(SR1);
+    send_message("'handle_reading()' got ");
     if (SR1 & I2C_SR1_SB) {
+        send_message("SB\r\n");
         I2C1->DR = _slave_address << 1 | 1;
         if(_i_read == _read - 1) 
             I2C1->CR1 &= ~I2C_CR1_ACK;
         else
             I2C1->CR1 |= I2C_CR1_ACK;
     } else if(SR1 & I2C_SR1_ADDR) {
+        send_message("ADDR\r\n");
         I2C1->CR2 |= I2C_CR2_ITBUFEN;
         I2C1->SR2;
         if(_read == 1)
             I2C1->CR1 |= I2C_CR1_STOP;
-        // else if(_i_read == _read - 1) {
-        //     I2C1->CR1 &= ~I2C_CR1_ACK;
-        //     I2C1->CR1 |= I2C_CR1_STOP;
-        // }
     } else if(SR1 & I2C_SR1_RXNE) {
+        send_message("RXNE\r\n");
         _buffer_read[_i_read] = I2C1->DR;
+        send_message("READ: ");
+        print_val(_buffer_read[_i_read]);
         _i_read++;
         if(_i_read == _read) {
             I2C1->CR2 &= ~I2C_CR2_ITBUFEN;
-            I2C1->CR2 &= ~(I2C_CR2_ITERREN | I2C_CR2_ITEVTEN);
             if(_callback)
                 _callback(_buffer_read);
-            _i2c_busy = 0;
+            if(q_size > 0) {
+                start_next_transmission();
+            } else {
+                I2C1->CR2 &= ~(I2C_CR2_ITERREN | I2C_CR2_ITEVTEN);
+                _i2c_busy = 0;
+            }
         } else if(_i_read == _read - 1) {
             I2C1->CR1 &= ~I2C_CR1_ACK;
             I2C1->CR1 |= I2C_CR1_STOP;
         }
     } else {
-        send_message("^ --- That was unexpected\r\n");
+        send_message("???\r\n");
     }
 }
 
@@ -228,13 +304,13 @@ void I2C1_EV_IRQHandler(void) {
     }
     else {
         uint32_t sr = I2C1->SR1;
-        send_message("Unexpected interrupt: ");
+        // send_message("Unexpected interrupt: ");
         print_interrupt(sr);
     }
 }
 
 void I2C1_ER_IRQHandler(void) {
     uint32_t sr = I2C1->SR1;
-    send_message("Error: ");
+    // send_message("Error: ");
     print_interrupt(sr);
 }
