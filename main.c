@@ -81,7 +81,7 @@ int main() {
 
     TIM4->CR1 = TIM_CR1_URS;
     TIM4->PSC = 15999;
-    TIM4->ARR = 99;
+    TIM4->ARR = 19;
     TIM4->EGR = TIM_EGR_UG;
     TIM4->SR = ~TIM_SR_UIF;
     TIM4->DIER =  TIM_DIER_UIE;
@@ -125,7 +125,6 @@ void configureUSART() {
 }
 
 void TIM4_IRQHandler(void) {
-    send_message("TIM4 interrupt\r\n");
     TIM4->SR = ~TIM_SR_UIF;
     updateLED();
 }

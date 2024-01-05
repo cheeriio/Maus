@@ -21,7 +21,6 @@ static void start_dma_transmission(char* message, int length) {
 }
 
 void send_message(char* message) {
-    return;
     // irq_level_t irq_level = IRQprotect(LOW_IRQ_PRIO);
     if((DMA1_Stream6->CR & DMA_SxCR_EN) == 0 &&
        (DMA1->HISR & DMA_HISR_TCIF6) == 0) {
