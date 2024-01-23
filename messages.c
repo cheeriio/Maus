@@ -1,12 +1,13 @@
 #include <irq.h>
 #include "messages.h"
-#include "prio.h"
-#include "utils.h"
 
-#define _MESSAGES_Q_LEN 1000
+#include <string.h>
+
+#define _MESSAGES_Q_LEN 100
+#define _MAX_MES_LEN 200
 
 typedef struct {
-    char* message;
+    char message[_MAX_MES_LEN];
     int length;
 } Message;
 
@@ -14,26 +15,23 @@ static Message mes_queue[_MESSAGES_Q_LEN];
 static int first = 0;
 static int q_size = 0;
 
-static void start_dma_transmission(char* message, int length) {
+static void start_dma_transmission(char* message, unsigned int length) {
     DMA1_Stream6->M0AR = (uint32_t)message;
     DMA1_Stream6->NDTR = length;
     DMA1_Stream6->CR |= DMA_SxCR_EN;
 }
 
-void send_message(char* message) {
-    // irq_level_t irq_level = IRQprotect(LOW_IRQ_PRIO);
+void send_message(char* message, unsigned int length) {
+    int index = (first + q_size) % _MESSAGES_Q_LEN;
+    q_size++;
+    mes_queue[index].length = length;
+    memcpy(mes_queue[index].message, message, length);
     if((DMA1_Stream6->CR & DMA_SxCR_EN) == 0 &&
        (DMA1->HISR & DMA_HISR_TCIF6) == 0) {
         // DMA available. Start transmission.
-        // IRQunprotect(irq_level);
-        start_dma_transmission(message, string_len(message));
-    } else {
-        // DMA occupied. Add message to queue.
-        int index = (first + q_size) % _MESSAGES_Q_LEN;
-        q_size++;
-        mes_queue[index].message = message;
-        mes_queue[index].length = string_len(message);
-        // IRQunprotect(irq_level);
+        first = (first + 1) % _MESSAGES_Q_LEN;
+        q_size--;
+        start_dma_transmission(mes_queue[index].message, length);
     }
 }
 

@@ -3,6 +3,6 @@
 
 void startAccelerometer();
 
-void updateLED();
+void readFromAccelerometer();
 
 #endif // _ACCELEROMETER_H_

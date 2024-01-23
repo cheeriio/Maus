@@ -1,7 +1,7 @@
 #include <stm32.h>
 #include <gpio.h>
 #include "i2c.h"
-#include "messages.h"
+
 #include <string.h>
 
 #define I2C_SPEED_HZ 100000
@@ -9,6 +9,7 @@
 
 #define _Q_LEN 1000
 #define _MAX_WRITE_LEN 10
+#define MAX_READ_LEN 100
 
 void i2c_enable() {
     RCC->AHB1ENR |= RCC_AHB1ENR_GPIOBEN;
@@ -32,8 +33,6 @@ void i2c_enable() {
     I2C1->CR1 |= I2C_CR1_PE;
 }
 
-#define MAX_READ_LEN 100
-
 typedef struct {
     int write;
     int read;
@@ -42,28 +41,33 @@ typedef struct {
     void (*callback)(char*);
 } Transmission;
 
+// Queue for all transmissions' data.
 static Transmission trans_queue[_Q_LEN];
 static int first = 0;
 static int q_size = 0;
 
-static int _write;
-static int _read;
-static char* _buffer_write;
-static char _buffer_read[MAX_READ_LEN];
-static char _slave_address;
+// Values for current I2C transmission.
+static int cur_write;
+static int cur_read;
+static char* cur_buffer_write;
+static void (*cur_callback)(char*);
+static char cur_slave_address;
 
-static int _i_write;
-static int _i_read;
+// Iterators for write/read buffers.
+static int i_write;
+static int i_read;
 
-static int _i2c_busy = 0;
-static void (*_callback)(char*);
+// Values read from I2C slave.
+static char cur_buffer_read[MAX_READ_LEN];
+
+static int i2c_busy = 0;
+
 
 void i2c_write_read(int write,
                     int read,
                     char slave_address,
                     char* buffer_write,
                     void (*callback)(char*)) {
-    // Turn off interrupts - add later
 
     int index = (first + q_size) % _Q_LEN;
     q_size++;
@@ -73,22 +77,22 @@ void i2c_write_read(int write,
     trans_queue[index].callback = callback;
     memcpy(trans_queue[index].buffer_write, buffer_write, write);
 
-    if (_i2c_busy) {
+    if (i2c_busy)
         return;
-    }
 
-    _i2c_busy = 1;
+    i2c_busy = 1;
 
-    // Turn on interrupts - add later
+    first = (first + 1) % _Q_LEN;
+    q_size--;
 
-    _write = write;
-    _read = read;
-    _buffer_write = trans_queue[index].buffer_write;
-    _slave_address = slave_address;
-    _callback = trans_queue[index].callback;
+    cur_write = write;
+    cur_read = read;
+    cur_buffer_write = trans_queue[index].buffer_write;
+    cur_slave_address = slave_address;
+    cur_callback = trans_queue[index].callback;
     
-    _i_write = 0;
-    _i_read = 0;
+    i_write = 0;
+    i_read = 0;
 
     I2C1->CR2 |= I2C_CR2_ITEVTEN;
     I2C1->CR1 |= I2C_CR1_START;
@@ -99,14 +103,14 @@ static void start_next_transmission() {
     first = (first + 1) % _Q_LEN;
     q_size--;
 
-    _write = t.write;
-    _read = t.read;
-    _buffer_write = t.buffer_write;
-    _slave_address = t.slave_address;
-    _callback = t.callback;
+    cur_write = t.write;
+    cur_read = t.read;
+    cur_buffer_write = t.buffer_write;
+    cur_slave_address = t.slave_address;
+    cur_callback = t.callback;
     
-    _i_write = 0;
-    _i_read = 0;
+    i_write = 0;
+    i_read = 0;
 
     I2C1->CR1 |= I2C_CR1_START;
 }
@@ -114,60 +118,60 @@ static void start_next_transmission() {
 static void handle_writing() {
     uint32_t SR1 = I2C1->SR1;
     if (SR1 & I2C_SR1_SB) {
-        I2C1->DR = _slave_address << 1;
+        I2C1->DR = cur_slave_address << 1;
     } else if (SR1 & I2C_SR1_ADDR) {
         I2C1->SR2;
-        if(_write > 1)
-            I2C1->CR2 |= I2C_CR2_ITBUFEN; // Turn on buffer related interrupts
-        I2C1->DR = _buffer_write[0];
-    } else if(SR1 & I2C_SR1_BTF && _i_write == _write - 1) {
-        _i_write++;
-        if(_read == 0){
+        if(cur_write > 1)
+            I2C1->CR2 |= I2C_CR2_ITBUFEN;
+        I2C1->DR = cur_buffer_write[0];
+    } else if(SR1 & I2C_SR1_BTF && i_write == cur_write - 1) {
+        i_write++;
+        if(cur_read == 0){
             I2C1->CR1 |= I2C_CR1_STOP;
             if(q_size > 0) {
                 start_next_transmission();
             } else {
                 I2C1->CR2 &= ~I2C_CR2_ITEVTEN;
-                _i2c_busy = 0;
+                i2c_busy = 0;
             }
         } else {
             I2C1->CR1 |= I2C_CR1_START;
         }
-    } else if(SR1 & I2C_SR1_TXE && _i_write < _write - 1) {
-        _i_write++;
-        if(_i_write == _write - 1)
-            I2C1->CR2 &= ~I2C_CR2_ITBUFEN; // Turn them off
-        I2C1->DR = _buffer_write[_i_write];
+    } else if(SR1 & I2C_SR1_TXE && i_write < cur_write - 1) {
+        i_write++;
+        if(i_write == cur_write - 1)
+            I2C1->CR2 &= ~I2C_CR2_ITBUFEN;
+        I2C1->DR = cur_buffer_write[i_write];
     }
 }
 
 static void handle_reading() {
     uint32_t SR1 = I2C1->SR1;
     if (SR1 & I2C_SR1_SB) {
-        I2C1->DR = _slave_address << 1 | 1;
-        if(_i_read == _read - 1) 
+        I2C1->DR = cur_slave_address << 1 | 1;
+        if(i_read == cur_read - 1) 
             I2C1->CR1 &= ~I2C_CR1_ACK;
         else
             I2C1->CR1 |= I2C_CR1_ACK;
     } else if(SR1 & I2C_SR1_ADDR) {
         I2C1->CR2 |= I2C_CR2_ITBUFEN;
         I2C1->SR2;
-        if(_read == 1)
+        if(cur_read == 1)
             I2C1->CR1 |= I2C_CR1_STOP;
     } else if(SR1 & I2C_SR1_RXNE) {
-        _buffer_read[_i_read] = I2C1->DR;
-        _i_read++;
-        if(_i_read == _read) {
+        cur_buffer_read[i_read] = I2C1->DR;
+        i_read++;
+        if(i_read == cur_read) {
             I2C1->CR2 &= ~I2C_CR2_ITBUFEN;
-            if(_callback)
-                _callback(_buffer_read);
+            if(cur_callback)
+                cur_callback(cur_buffer_read);
             if(q_size > 0) {
                 start_next_transmission();
             } else {
                 I2C1->CR2 &= ~I2C_CR2_ITEVTEN;
-                _i2c_busy = 0;
+                i2c_busy = 0;
             }
-        } else if(_i_read == _read - 1) {
+        } else if(i_read == cur_read - 1) {
             I2C1->CR1 &= ~I2C_CR1_ACK;
             I2C1->CR1 |= I2C_CR1_STOP;
         }
@@ -175,10 +179,10 @@ static void handle_reading() {
 }
 
 void I2C1_EV_IRQHandler(void) {
-    if(_i_write < _write) {
+    if(i_write < cur_write) {
         handle_writing();
     }
-    else if(_i_read < _read){
+    else if(i_read < cur_read){
         handle_reading();
     }
 }

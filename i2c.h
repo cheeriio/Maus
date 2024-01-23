@@ -3,8 +3,8 @@
 
 void i2c_enable();
 
-void i2c_write_read(int write,
-                    int read,
+void i2c_write_read(int write_n,
+                    int read_n,
                     char slave_address,
                     char* buffer_write,
                     void (*callback)(char*));

@@ -7,21 +7,22 @@
 
 #define LIS35DE_ADDR 0x1D
 
+static signed char read_values[2];
+
 void startAccelerometer() {
     char buffer_setup_ctrl_reg_1[] = {0x20, 0x47};
     i2c_write_read(2, 0, LIS35DE_ADDR, buffer_setup_ctrl_reg_1, NULL);
 }
 
 static void read_x_callback(char* buffer) {
-    TIM3->CCR1 = 1000 - abs((signed char)buffer[0])*3;
+    TIM3->CCR1 = 980 - abs((signed char)buffer[0])*3;
+    read_values[0] = (signed char)buffer[0];
 }
 
 static void read_y_callback(char* buffer) {
-    TIM3->CCR2 = 1000 - abs((signed char)buffer[0])*3;
-}
-
-static void read_z_callback(char* buffer) {
-    TIM3->CCR3 = 1000 - abs((signed char)buffer[0])*3;
+    TIM3->CCR2 = 980 - abs((signed char)buffer[0])*3;
+    read_values[1] = (signed char)buffer[0];
+    send_message((char*)read_values, 2);
 }
 
 static void readX() {
@@ -34,13 +35,7 @@ static void readY() {
     i2c_write_read(1, 1, LIS35DE_ADDR, buffer_write, read_y_callback);
 }
 
-static void readZ() {
-    char buffer_write[] = {0x2D};
-    i2c_write_read(1, 1, LIS35DE_ADDR, buffer_write, read_z_callback);
-}
-
-void updateLED() {
+void readFromAccelerometer() {
     readX();
     readY();
-    readZ();
 }
